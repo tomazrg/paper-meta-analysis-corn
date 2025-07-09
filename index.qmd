@@ -65,6 +65,8 @@ print(corr_res)
 corr_res$data
 ```
 
+# Manipulation
+
 ```{r}
 meta3 <- meta2 %>% 
   filter(yield2 != 0) %>% 
@@ -91,6 +93,8 @@ corr_res <- corr_coef(
 )
 corr_res$data
 ```
+
+# Gamlss
 
 ```{r}
 
@@ -124,19 +128,28 @@ term.plot(mod_beinf, what = "nu", ask = FALSE)
 ```
 
 ```{r}
+meta3$prob_zero <- fitted(mod_beinf, what = "nu")
+meta3$prob_one  <- fitted(mod_beinf, what = "tau")
+```
+
+# Damage analysis
+
+```{r}
 
 library(broom)
 
 meta4 = meta3
-#meta4$severity =meta4$severity*100
+
 meta4$yield =meta4$yield*1000
 
 meta5 = meta4 %>% 
- dplyr::group_by(technology) %>%
+ dplyr::group_by(season,technology) %>%
   do({
-    model <- lm(.$yield ~ .$severity)
+    model <- lm(.$yield ~ .$severity + factor(.$year))
     tidy_model <- tidy(model)
     confint_model <- confint(model)
     bind_cols(tidy_model, confint_model)
   })
+
+meta5
 ```

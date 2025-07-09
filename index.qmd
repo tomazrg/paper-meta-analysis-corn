@@ -1,0 +1,142 @@
+---
+title: "Meta-analysis"
+author: "Ricardo Gomes Tomáz"
+format: html
+editor: visual
+---
+
+# Packages
+
+```{r}
+library(gsheet)
+library(dplyr)
+library(tidyverse)
+library(metan)
+library(writexl)
+library(ggthemes)
+```
+
+# Importation
+
+```{r}
+meta = gsheet2tbl("https://docs.google.com/spreadsheets/d/1_T6cn22ZwOZQTUGfgOtg4pZ2Hed-OwFelVyHgOrIH8U/edit?usp=sharing")
+
+meta$yield2 = meta$yield2/1000
+meta$yield = NULL
+```
+
+```{r}
+library(tidyr)
+
+meta2 <- meta %>%
+  pivot_longer(
+    cols = c(poli, comum, branca, cercos, turc, diplo,antrac,bipol),
+    names_to = "disease",
+    values_to = "severity"
+  )
+
+meta2 %>% 
+  filter(treat == "check") %>% 
+  ggplot(aes(severity))+
+  geom_histogram()+
+  facet_wrap(~technology)
+
+
+
+anova_result <- meta2 %>%
+  anova_ind(
+    severity,
+    env = location,   # Ambiente
+    gen = hybrid,     # Genótipo
+    rep = rep         # Repetição
+  )
+print(anova_result)
+
+
+
+corr_res <- corr_coef(
+  meta2,
+  y = severity,
+  x = yield2,
+  by = disease
+)
+print(corr_res)
+
+corr_res$data
+```
+
+```{r}
+meta3 <- meta2 %>% 
+  filter(yield2 != 0) %>% 
+  group_by(season, year, location, technology, application, hybrid, plot, disease) %>% 
+  summarise(
+    yield = mean(yield2, na.rm = TRUE),
+    severity = mean(severity, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+meta3 <- meta3 %>%
+  group_by(season, year, location, technology, application, hybrid, plot) %>% 
+  summarise(
+    yield = mean(yield, na.rm = TRUE),
+    severity = sum(severity, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+corr_res <- corr_coef(
+  meta3,
+  y = severity,
+  x = yield,
+  by = technology
+)
+corr_res$data
+```
+
+```{r}
+
+library(gamlss)
+
+mod_beinf <- gamlss(
+  severity/100 ~ season + technology + application,
+    sigma.formula = ~ 1,                      # dispersão constante
+  nu.formula = ~ location,                  # probabilidade de zero
+  tau.formula = ~ 1,                        # probabilidade de um (se existir)
+  family = BEINF,
+  data = meta3
+  
+)
+
+summary(mod_beinf)
+```
+
+```{r}
+meta3$predicted_severity <- predict(mod_beinf, type = "response")
+
+plot(mod_beinf)
+```
+
+```{r}
+term.plot(mod_beinf, what = "mu", ask = FALSE)
+```
+
+```{r}
+term.plot(mod_beinf, what = "nu", ask = FALSE)
+```
+
+```{r}
+
+library(broom)
+
+meta4 = meta3
+#meta4$severity =meta4$severity*100
+meta4$yield =meta4$yield*1000
+
+meta5 = meta4 %>% 
+ dplyr::group_by(technology) %>%
+  do({
+    model <- lm(.$yield ~ .$severity)
+    tidy_model <- tidy(model)
+    confint_model <- confint(model)
+    bind_cols(tidy_model, confint_model)
+  })
+```

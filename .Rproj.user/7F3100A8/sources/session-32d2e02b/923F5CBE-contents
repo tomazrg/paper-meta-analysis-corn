@@ -1,0 +1,190 @@
+---
+title: "Meta-analysis"
+author: "Ricardo Gomes Tomáz"
+format: html
+editor: visual
+---
+
+# Packages
+
+```{r}
+library(gsheet)
+library(dplyr)
+library(tidyverse)
+library(metan)
+library(writexl)
+library(ggthemes)
+```
+
+# Importation
+
+```{r}
+meta = gsheet2tbl("https://docs.google.com/spreadsheets/d/1_T6cn22ZwOZQTUGfgOtg4pZ2Hed-OwFelVyHgOrIH8U/edit?usp=sharing")
+
+meta$yield2 = meta$yield2/1000
+meta$yield = NULL
+```
+
+```{r}
+library(tidyr)
+
+meta2 <- meta %>%
+  pivot_longer(
+    cols = c(poli, comum, branca, cercos, turc, diplo,antrac,bipol),
+    names_to = "disease",
+    values_to = "severity"
+  )
+
+meta2 %>% 
+  filter(treat == "check") %>% 
+  ggplot(aes(severity))+
+  geom_histogram()+
+  facet_wrap(~technology)
+
+
+
+anova_result <- meta2 %>%
+  anova_ind(
+    severity,
+    env = location,   # Ambiente
+    gen = hybrid,     # Genótipo
+    rep = rep         # Repetição
+  )
+print(anova_result)
+
+
+
+corr_res <- corr_coef(
+  meta2,
+  y = severity,
+  x = yield,
+  by = disease
+)
+print(corr_res)
+
+corr_res$data
+```
+
+```{r}
+meta3 = meta2 %>% 
+  filter(!yield2 == 0) %>% 
+  dplyr::group_by(season,year,location,technology,application,hybrid,plot,disease) %>% 
+  dplyr::summarise(
+    yield = mean(yield2),
+    severity = mean(severity, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+
+meta3 = meta3 %>% 
+   dplyr::group_by(season,year,location,technology,application,hybrid,plot) %>% 
+  dplyr::summarise(
+    yield = mean(yield, na.rm = TRUE),
+    severity = sum(severity, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+tail(meta3)
+
+meta3 %>% 
+  ggplot(aes(severity,yield))+
+  geom_point()+
+  geom_smooth(method = "lm")+
+  facet_wrap(~application+technology)
+```
+
+```{r}
+
+library(gamlss)
+
+meta3$severity = meta3$severity/100
+  
+mod_beinf <- gamlss(
+  severity ~ season + technology + application,               # mu   sigma.formula = ~ 1,                      # dispersão constante
+  nu.formula = ~ location,                  # probabilidade de zero
+  tau.formula = ~ 1, 
+  family = BEINF,
+  data = meta3
+)
+
+summary(mod_beinf)
+plot(mod_beinf) 
+term.plot(mod_beinf)
+meta3$fit <- fitted(mod_beinf)
+meta3$prob_zero <- fitted(mod_beinf, what = "nu")
+meta3$prob_one  <- fitted(mod_beinf, what = "tau")
+
+meta3$predicted_severity <- predict(mod_beinf, type = "response")
+term.plot(mod_beinf, what = "mu", ask = FALSE)
+
+ggplot(meta3, aes(x = technology, y = predicted_severity, fill = technology)) +
+  geom_boxplot() +
+  facet_wrap(~season) +
+  theme_minimal() +
+  labs(title = "Severidade predita por tecnologia e safra")
+
+mean(meta3$severity)
+```
+
+```{r}
+library(gamlss.dist)
+
+# Pegando os parâmetros estimados para uma observação (exemplo)
+mu_val <- fitted(mod_beinf, what = "mu")[1]
+sigma_val <- fitted(mod_beinf, what = "sigma")[1]
+nu_val <- fitted(mod_beinf, what = "nu")[1]
+tau_val <- fitted(mod_beinf, what = "tau")[1]
+
+# Simulação
+set.seed(123)
+sim <- rBEINF(n = 1000, mu = mu_val, sigma = sigma_val, nu = nu_val, tau = tau_val)
+
+hist(sim, breaks = 50)
+```
+
+```{r}
+library(cplm)
+mod_tweedie <- cpglm(severity ~ season + technology + application, data = meta3)
+summary(mod_tweedie)
+```
+
+```{r}
+library(flexmix)
+
+mod_mix <- flexmix(severity ~ 1, data = meta3, k = 2)
+
+summary(mod_mix)
+
+
+meta3$sev_transf <- log1p(meta3$severity)  # log(1 + x)
+
+lm(sev_transf ~ season + technology, data = meta3)
+
+library(brms)
+mod_brms <- brm(
+  bf(severity ~ season + technology + application, family = zero_inflated_beta()),
+  data = meta3
+)
+
+summary(mod_brms)
+
+lm(yield/1000 ~ severity, data = meta3)
+
+
+meta4 = meta3
+meta4$severity = meta4$severity*100
+
+library(broom)
+
+
+meta5 <- meta4 %>%
+  group_by(season,technology) %>%
+  do({
+    model <- lm(.$yield ~ .$severity)
+    tidy_model <- tidy(model)
+    confint_model <- confint(model) 
+    bind_cols(tidy_model, confint_model)
+  })
+meta5
+
+```

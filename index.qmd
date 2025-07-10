@@ -52,8 +52,22 @@ anova_result <- meta2 %>%
   )
 print(anova_result)
 
+res_ind <- waasb(meta2,
+                 env = location,
+                 gen = hybrid,
+                 rep = rep,
+                 resp = c(yield2, severity))
+data_ge
+model_indexes <- blup_indexes(res_ind)
+model <- performs_ammi(meta2, location, hybrid, rep, resp = c(yield2, severity))
 
+plot_scores(model)
+plot_scores(model,
+            var = 1, # or "HM"
+            type = 1)
+mgidi(mod = res_ind)  # h = maior, l = menor
 
+gmd(res_ind)
 corr_res <- corr_coef(
   meta2,
   y = severity,

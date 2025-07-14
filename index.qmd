@@ -4,6 +4,7 @@ author: "Ricardo Gomes Tomáz"
 format: html
 editor: visual
 cache: true
+warning: false                                    
 ---
 ## Load packages
 

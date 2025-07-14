@@ -1,0 +1,5 @@
+"0","dados_meta %>% "
+"0","  filter(sev_check >=5) %>% "
+"0","  ggplot(aes(sev_check,yld_check))+"
+"0","  geom_point()"
+"0",""

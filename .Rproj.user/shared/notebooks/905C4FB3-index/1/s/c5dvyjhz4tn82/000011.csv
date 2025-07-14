@@ -1,0 +1,4 @@
+"0","dados_meta |> "
+"0","  ggplot(aes(season, yld_check))+"
+"0","  geom_boxplot()"
+"0",""

@@ -1,0 +1,5 @@
+"0","dados3 %>% "
+"0","  group_by(application) %>% "
+"0","  summarise("
+"0","    sev = mean(sev)"
+"0","  )"

@@ -1,0 +1,4 @@
+"0","dados_meta |> "
+"0","  ggplot(aes(factor(year), sev_check, color = season))+"
+"0","  geom_boxplot()"
+"0",""

@@ -1,0 +1,469 @@
+---
+title: "Fungicides corn"
+format: html
+editor: visual
+warning: false
+message: false
+---
+
+## Load packages
+
+```{r}
+library(gsheet)
+library(tidyverse)
+library(lme4)
+library(metan)
+library(DHARMa)
+library(metafor)
+```
+
+## Import data
+
+```{r}
+dados <- gsheet2tbl("https://docs.google.com/spreadsheets/d/1pUGN7bPHtENsO8eb-f8J1q6_pbMqm86bVnaNlgClleo/edit?usp=sharing")
+```
+
+## Prepare data
+
+```{r}
+
+dados2 <- dados |> 
+  mutate(trial = interaction(year, location, season, hybrid))
+
+dados3 <- dados2 |> 
+  dplyr::group_by(trial, year, location, season, hybrid, technology, application) |>
+  dplyr::summarize(sev = mean(severity),
+            yld = mean(yield2),
+            sd_sev = sd(severity),
+            sd_yld = sd(yield2),
+            n = n()
+            )
+
+dados_meta <- dados3 %>%
+  dplyr::select(trial, year, location, season, hybrid, technology, application, yld, sd_yld, n, sev) %>%
+  pivot_wider(
+    names_from = application,
+    values_from = c(yld, sd_yld,n, sev),
+    names_sep = "_"
+  ) %>%
+    dplyr::mutate(
+    study_id = paste(trial, year, location, season, hybrid, sep = "_"),
+    pressao = ifelse(sev_check > 10, "high", "low"),
+    yi = yld_treated - yld_check,
+    sei = sqrt((sd_yld_treated^2 / n_treated) + (sd_yld_check^2 / n_check))
+  ) %>%
+  drop_na(yi, sei)  # remover casos com NA em yi ou sei
+
+dados_meta
+```
+
+```{r}
+dados_meta |> 
+  ungroup() |> 
+  count(hybrid) |> 
+  arrange(n)
+
+
+
+```
+
+```{r}
+dados_meta |> 
+  ggplot(aes(season, yld_check))+
+  geom_boxplot()
+
+```
+
+```{r}
+dados_meta |> 
+  ggplot(aes(season, sev_check))+
+  geom_boxplot()
+
+```
+
+```{r}
+dados_meta |> 
+  ggplot(aes(factor(year), sev_check, color = season))+
+  geom_boxplot()
+
+```
+
+```{r}
+
+dados_meta |> 
+  ggplot(aes(factor(year), yld_check, color = season))+
+  geom_boxplot()
+```
+
+```{r}
+dados_meta %>% 
+  filter(sev_check >=5) %>% 
+  ggplot(aes(sev_check,yld_check))+
+  geom_point()
+
+```
+
+```{r}
+dd = dados3 %>% 
+ # filter(!season == "first") %>% 
+  filter(sev >=5) %>% 
+  filter(yld <=12000)
+
+
+dd %>% 
+  ggplot(aes(sev,yld))+
+  geom_point()
+
+```
+
+```{r}
+tt = lmer(yld ~sev + (1|year), data = dd)
+
+summary(tt)
+confint(tt)
+
+```
+
+```{r}
+
+ dd |> 
+ ggplot(aes(sev, y = yld)) +
+  geom_point(color = "NA")+
+  scale_y_continuous(breaks = c(3000,3500, 4000, 4500,5000,5500,6000,6500,7000,7500,8000,8500,9000,9500,
+                      10000,10500,11000,11500,12000,12500), 
+                     limits = c(3000, 12500))+
+  scale_x_continuous(breaks = c(5, 10,15, 20,25, 30,35,40),
+                     limits = c(5, 40))+
+  geom_abline(aes(slope = -73, intercept = 8053),
+              size = 1.5, fill = "black", color = "black")+
+  geom_abline(aes(intercept = 6911,slope = -128) ,
+              size = .51, linetype = 2)+
+  geom_abline(aes(intercept = 9186,slope = -14), size = .51, linetype = 2)+
+  #annotate(geom="text", x=55, y=6000, label="DC = 0.2",
+   #           color="black", size = 4)+
+    ggthemes::theme_few()+
+  theme(text = element_text(size = 12),
+        axis.title = element_text(size = 14, face = "bold"),
+        title = element_text(face = "bold"),
+        legend.position = "none")+
+  labs(x = "Severity (%) ", y = "Yield (kg/ha) ")
+ 
+
+```
+
+## Metafor
+
+```{r}
+dados_metaa = dados_meta %>% 
+   filter(sev_check >=5) %>% 
+  filter(yld_check <= 12000)
+
+mod_reduced <- rma.mv(yi, sei^2, mods = ~ season + pressao,
+                      random = ~1 | year/location/hybrid, data = dados_metaa)
+
+#mod_reduced <- rma(yi = yi ~ factor(season), sei = sei, data = dados_meta)
+
+summary(mod_reduced)
+ 
+```
+
+```{r}
+AIC(mod_reduced)
+
+```
+
+```{r}
+mod_reduced_prep <- emmprep(mod_reduced)
+
+library(emmeans)
+mod_means <- emmeans(mod_reduced_prep, ~  season + pressao)
+mod_means
+
+
+mod_means_df <- as.data.frame(mod_means)
+mod_means_df
+
+```
+
+```{r}
+library(ggplot2)
+library(cowplot)
+library(ggthemes)
+
+ggplot(mod_means_df, aes(x = season, y = emmean,
+                         fill = pressao)) +
+  geom_col(position = position_dodge(width = 0.7)) +
+  scale_fill_viridis_d()+
+  
+  geom_errorbar(aes(ymin = emmean - SE, ymax = emmean + SE),
+                width = 0.1,
+                position = position_dodge(width = 0.7)) +
+   labs(
+    x = "Season",
+    y = "Yield response (kg/ha)",
+    fill = "Disease pressure (10% severity)",
+    title = "")+
+  theme_few()+
+  theme(legend.position = "bottom",
+        text = element_text(size = 10, face = "bold"),
+        axis.text.x = element_text(size = 10, face = "bold"),   
+        axis.text.y = element_text(size = 10, face = "bold"))
+```
+
+```{r}
+
+preco_saca = seq(30,60,by = 5)
+custo_fungicida = seq(100, 800,by = 100)
+
+econ <- as.data.frame(mod_means)
+
+
+library(purrr)
+
+economic <- map_dfr(1:nrow(econ), function(i) {
+  df_row <- econ[i, ]
+  expand.grid(preco_saca = preco_saca, custo_fungicida = custo_fungicida) %>%
+    mutate(across(everything(), as.numeric)) %>%
+    mutate(across(.cols = everything(), .fns = identity)) %>%
+    bind_cols(df_row[rep(1, nrow(.)), ])
+})
+
+
+ ec = economic %>%
+  #group_by(pressao,season,preco_saca, custo_fungicida) %>% 
+  dplyr::mutate(
+    ganho_kg = emmean,
+    se_dif = SE,
+    lower_kg = emmean - 1.96 * SE,
+    upper_kg = emmean + 1.96 * SE,
+
+    ganho_sacas = ganho_kg / 60,
+    lower_sacas = lower_kg / 60,
+    upper_sacas = upper_kg / 60,
+
+    income = ganho_sacas * preco_saca,
+    income_lower = lower_sacas * preco_saca,
+    income_upper = upper_sacas * preco_saca,
+    return = income - custo_fungicida,
+    return_lower = income_lower - custo_fungicida,
+    return_upper = income_upper - custo_fungicida,
+    profit  = (income>=custo_fungicida)*1
+) %>% 
+   group_by(custo_fungicida,preco_saca,season,pressao) %>% 
+  summarise(n = n(), sumn = sum(profit), prob = sumn / n,
+            return = mean(return),
+            return_lower = mean(return_lower),
+            return_upper = mean(return_upper))
+
+```
+
+```{r}
+ec %>% 
+  ggplot(aes(as.factor(preco_saca),as.factor(custo_fungicida), fill = prob))+ 
+  geom_tile(color = "white", size = 0.5)+
+  scale_fill_viridis_b(option = "E", direction =  -1)+
+  #scale_fill_viridis_b(option = "C", 
+    #          guide = guide_colorbar(barwidth = 0.3, barheight = 10),
+     #       breaks = seq(0, 1, by =0.05))+
+  facet_wrap(~season+pressao, nrow = 2)+
+  theme_minimal_grid()+
+  labs(x = "Maize price (R$/sc)",
+       y = "Cost (R$/ha)",
+       fill ="Pr(I \u2265 C)" )+
+  theme(legend.position = "right",
+        legend.justification = 0.5,
+        text = element_text(size = 10, face = "bold"),
+        axis.text.x = element_text(size = 10, face = "bold"),   
+        axis.text.y = element_text(size = 10, face = "bold"))
+```
+
+```{r}
+ggplot(ec, aes(return)) +
+ #geom_histogram(color  = "white",fill = "black")+
+  stat_halfeye(fill = "#ffc425", alpha = 0.7)+
+  facet_wrap(~ season+pressao)+
+  theme_few()+
+  labs(
+    x = "Season",
+    y = "Estimated return (R$/ha)")+
+    theme(text = element_text(size = 10, face = "bold"),
+        axis.text.x = element_text(size = 10, face = "bold"),   
+        axis.text.y = element_text(size = 10, face = "bold"))
+```
+
+```{r}
+dados3 %>% 
+  group_by(application) %>% 
+  summarise(
+    sev = mean(sev)
+  )
+```
+
+```{r}
+set.seed(1)
+
+u_j <- rnorm(100, mean = 0, sd = 897.1)
+
+#mean_uj = mean(u_j)
+
+df <- expand.grid(sev = seq(0, 100, by = 1), rep = 1:100)
+df$yield = 8053.84 - 73.68*df$sev - rep(u_j, each = 101)
+df$relative <- df$yield *100 / 8053.84
+
+df2 = df %>% 
+  group_by(sev) %>% 
+  summarise(mean = mean(relative),
+     up_95 = quantile(relative, 0.975),
+     low_95 = quantile(relative, 0.025))
+
+
+relative_plot = ggplot() +
+  geom_line(data = df, aes(x = sev, y = relative, group = rep), 
+            color = "grey", alpha = 0.4) +  # Linhas cinzas para cada simulação
+  geom_line(data = df2, aes(x = sev, y = mean), 
+            color = "black", size = 1.4) +  # Linha média
+  geom_line(data = df2, aes(x = sev, y = up_95), 
+            color = "black", linetype = "dashed",size = 1) +  # IC superior
+  geom_line(data = df2, aes(x = sev, y = low_95), 
+            color = "black", linetype = "dashed",size = 1) +  # IC inferior
+  scale_y_continuous(breaks = c(20,30, 40,50, 60,
+                                70,80,90,100), 
+                     limits = c(20, 100),
+                     expand = c(0, 2))+
+  scale_x_continuous(breaks = c(0,10,20,30,40,50,60,70,80,90, 100),
+                     limits = c(0, 100),
+                     expand = c(0, 2))+
+  coord_cartesian(xlim = c(0,100), ylim = c(20,100))+
+  labs(x = "Disease severity (%)", y = "Relative yield (%) ")+
+  geom_hline(yintercept = 90,
+             linetype = 2, color = "darkblue", size = 1)+
+  geom_vline(xintercept = c(10), linetype = 2, color = "darkblue", size = 1)+
+  ggthemes::theme_few()+
+  theme(text = element_text(size = 10, face = "bold"),
+        axis.text.x = element_text(size = 10, face = "bold"),   
+        axis.text.y = element_text(size = 10, face = "bold"))
+
+relative_plot
+```
+
+```{r}
+u_j2 = as.data.frame(u_j)
+random = u_j2 %>% 
+  ggplot(aes(u_j))+
+ geom_histogram(aes(y = ..density..), fill = "black",
+                 color = "white", bins = 15) +
+  stat_function(fun = dnorm, 
+                args = list(mean = 0, sd = 897.1), 
+                color = "darkblue", size = 1.2, linetype = "solid")+
+  ggthemes::theme_few()+
+   labs(x = "Random effect (kg/ha)",
+       y = "Frequency")+
+  theme(text = element_text(size = 10, face = "bold"))
+```
+
+```{r}
+mean(df$yield)
+sd(df$yield)
+b0 = df%>% 
+  ggplot(aes(yield))+
+  geom_histogram(aes(y = ..density..), fill = "black",
+                 color = "white", bins = 15) +
+  stat_function(fun = dnorm, 
+                args = list(mean = 4272.157, sd = 2292.974), 
+                color = "darkblue", size = 1.2, linetype = "solid")+
+  ggthemes::theme_few()+
+  labs(x = "Intercept (kg/ha)",
+       y = "Frequency")+
+  theme(text = element_text(size = 10, face = "bold"))
+```
+
+```{r}
+library(patchwork)
+
+#plot_grid(slope_plot / intercept_plot | relative_plot, ncol = 1,
+ #         label_x = -0.02, label_size = 12)
+
+(random / b0 |relative_plot) +
+  plot_annotation(tag_levels = "a", tag_prefix = "(", tag_suffix = ")")&
+  theme(plot.tag = element_text(face = "bold", size = 12))
+```
+
+```{r}
+# Above 25%
+yld = data.frame(yld = seq(4000,12000,by = 500))
+
+sev  = data.frame(sev = seq(5,100, by = 5))
+
+combined_data<- expand.grid(sev = sev$sev, yld = yld$yld)
+
+ylmer_simu_min = combined_data %>% 
+  mutate(loss =((((((73.68/8053.84)*sev)*100)*yld)/100)/1000)*200)
+
+heat_loss =ylmer_simu_min %>%
+  ggplot(aes(sev,yld, fill = loss)) +
+  geom_tile(color = "white", size = 0.8) +
+  scale_x_continuous(breaks = seq(5, 100, by = 5)) +
+  scale_y_continuous(breaks = seq(4000, 12000, by = 500)) +
+  scale_fill_viridis_b(option = "E", 
+                     guide = guide_colorbar(barwidth = 0.3, barheight = 15), 
+                     breaks = seq(0, 2000, by = 300))+
+   geom_text(aes(label = as.integer(loss)),
+    size = 3, colour = "white")+
+   #facet_wrap(~price, labeller = as_labeller(custom_labels))+
+  theme_minimal_grid(font_size = 14) +
+  labs(
+    y = "Attainable yield (kg/ha)",
+    x = "Disease severity (%)",
+    fill = "L (USD/ha)"
+  )+
+   theme(text = element_text(size = 14),
+     axis.title = element_text(size = 20, face = "bold"),
+    strip.text = element_text(size= 14, vjust = -1),
+    #axis.text.y = element_text(hjust = -3),
+    axis.text.x = element_text(vjust = 3),
+    legend.position = "right",
+    legend.justification = 0.5,
+    panel.grid = element_blank())
+
+median(ylmer_simu_min$loss)
+```
+
+```{r}
+library(ggdist)
+hist_loss = ylmer_simu_min %>%
+ggplot(aes(x = loss)) +
+  stat_halfeye(fill = "#ffc425", alpha = 0.7)+
+  geom_vline(aes(xintercept = 695.2808), color = "#1c1c3c", linetype = "dashed", size = 2) +
+  ggthemes::theme_few() +
+   #scale_x_continuous(breaks = seq(0,2100, by = 100)) +
+  #scale_x_continuous(breaks=c(50,150,250,350,450,550,
+   #                           650,750,850,950,1050,
+    #                          1150,1250,1350,1450,1550,1650,1750,1850,1950,
+     #                         2150))+
+  labs(
+    y = "Density",
+    x = "Economic losses (USD/ha)")+
+    theme(
+    text = element_text(face = "bold", size = 14),
+    axis.title = element_text(size = 20, face = "bold"),
+    axis.text.x = element_text(vjust = 1, size = 14, face = "bold"),
+    axis.text.y = element_text(vjust = 1, size = 14, face = "bold"),
+    legend.position = "none",
+    legend.justification = 0.5,
+    panel.grid = element_blank(),
+    strip.text = element_blank() 
+  )
+
+hist_loss
+```
+
+```{r}
+(hist_loss+heat_loss) +
+  plot_annotation(tag_levels = "a", tag_prefix = "(", tag_suffix = ")")&
+  theme(plot.tag = element_text(face = "bold", size = 24)) 
+```
+
+```{r}
+ ggsave("fig/loss.png", bg = "white",
+       dpi = 600,height =8, width = 16)
+```

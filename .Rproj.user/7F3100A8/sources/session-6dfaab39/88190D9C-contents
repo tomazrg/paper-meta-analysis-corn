@@ -427,6 +427,12 @@ heat_loss =ylmer_simu_min %>%
     legend.justification = 0.5,
     panel.grid = element_blank())
 
+heat_loss
+
+
+```
+
+```{r}
 median(ylmer_simu_min$loss)
 ```
 
